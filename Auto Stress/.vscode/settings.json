@@ -1,0 +1,17 @@
+{
+    "python.defaultInterpreterPath": "c:\\Users\\DP201609005\\Documents\\AI Work\\Stress Auto\\.venv\\Scripts\\python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python.languageServer": "Pylance",
+    "python.analysis.exclude": [
+        "**/backup/**",
+        "**/Result/**",
+        "**/.venv/**"
+    ],
+    "files.watcherExclude": {
+        "**/backup/**": true,
+        "**/Result/**": true,
+        "**/.venv/**": true
+    },
+    "pyre.enabled": false,
+    "pyrefly.enabled": false
+}

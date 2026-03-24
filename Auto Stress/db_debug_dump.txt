@@ -1,0 +1,160 @@
+{'category': 'IC', 'part_number': 'UCC28064', 'specs': ['18V']}
+{'category': 'IC', 'part_number': 'UCC28064A', 'specs': ['21V']}
+{'category': 'IC', 'part_number': 'UCC25600', 'specs': ['22V']}
+{'category': 'IC', 'part_number': 'FA1A62N', 'specs': ['28V']}
+{'category': 'IC', 'part_number': 'FA6C13N', 'specs': ['40V']}
+{'category': 'IC', 'part_number': 'FA6B22N', 'specs': ['33V']}
+{'category': 'IC', 'part_number': 'FA6B24N', 'specs': ['33V']}
+{'category': 'IC', 'part_number': 'SSC3S927A', 'specs': ['35V']}
+{'category': 'IC', 'part_number': 'SSC3S932', 'specs': ['35V']}
+{'category': 'IC', 'part_number': 'MAP3514DSIRH', 'specs': ['20V']}
+{'category': 'IC', 'part_number': 'MAP3525BSIRH', 'specs': ['20V']}
+{'category': 'IC', 'part_number': 'MAP3525B', 'specs': ['18V']}
+{'category': 'IC', 'part_number': 'ICE3PCS03G', 'specs': ['26V']}
+{'category': 'IC', 'part_number': 'ICS801S', 'specs': ['33V']}
+{'category': 'IC', 'part_number': 'RT7272BGSP', 'specs': ['36V']}
+{'category': 'IC', 'part_number': 'HR1280GYT', 'specs': ['25V']}
+{'category': 'IC', 'part_number': 'KIA75S358F', 'specs': ['36V']}
+{'category': 'IC', 'part_number': 'HR1280', 'specs': ['26V']}
+{'category': 'IC', 'part_number': 'LR431APTLT1H', 'specs': ['36V']}
+{'category': 'IC', 'part_number': 'LR431APTLT1H(0.5%)', 'specs': ['36V']}
+{'category': 'IC', 'part_number': 'KIA431BM', 'specs': ['37V']}
+{'category': 'IC', 'part_number': 'NCP4318ALSDR2G', 'specs': ['37V']}
+{'category': 'MOSFET', 'part_number': 'MMSF60R190QTH', 'specs': ['600V', '30V', '20A']}
+{'category': 'MOSFET', 'part_number': 'IPT60R037CM8', 'specs': ['650V', '30V', '70A']}
+{'category': 'MOSFET', 'part_number': 'IPA60R120P7', 'specs': ['600V', '30V', '26A']}
+{'category': 'MOSFET', 'part_number': '9NM50G-TN3-R', 'specs': ['500V', '30V', '11A']}
+{'category': 'MOSFET', 'part_number': 'KP280N60DM3Z', 'specs': ['600V', '30V', '15A']}
+{'category': 'MOSFET', 'part_number': 'MMD60R180S6ZRH', 'specs': ['600V', '25V', '18A']}
+{'category': 'MOSFET', 'part_number': 'MMTB65R130RF', 'specs': ['650V', '30V', '30A']}
+{'category': 'MOSFET', 'part_number': 'MMF60R190QTH', 'specs': ['600V', '30V', '20A']}
+{'category': 'MOSFET', 'part_number': 'MDF3752TH', 'specs': ['-40V', '±20V', '-36.5A']}
+{'category': 'MOSFET', 'part_number': 'MDP15N075TH', 'specs': ['150V', '20V', '120A']}
+{'category': 'MOSFET', 'part_number': 'SNN060L10F', 'specs': ['100V', '20V', '63A']}
+{'category': 'MOSFET', 'part_number': 'MMSF60R280QTH', 'specs': ['600V', '30V', '13.8A']}
+{'category': 'MOSFET', 'part_number': 'MDF1922', 'specs': ['100V', '20V', '40A']}
+{'category': 'MOSFET', 'part_number': 'MMD60R580QRH', 'specs': ['600V', '±30V', '8A']}
+{'category': 'MOSFET', 'part_number': 'KF5N50DZ', 'specs': ['500V', '30V', '4.3A']}
+{'category': 'MOSFET', 'part_number': 'MDD3752RH', 'specs': ['-40V', '±20V', '-43A']}
+{'category': 'MOSFET', 'part_number': 'MDF1921', 'specs': ['100V', '20V', '60A']}
+{'category': 'MOSFET', 'part_number': 'MMD60R280QRH', 'specs': ['600V', '30V', '13.8A']}
+{'category': 'MOSFET', 'part_number': 'KP280N60FWM3Z', 'specs': ['600V', '25V', '15A']}
+{'category': 'MOSFET', 'part_number': 'MMSFA60R180S6ZTH', 'specs': ['600V', '25V', '18A']}
+{'category': 'MOSFET', 'part_number': 'MMSF60R360QTH', 'specs': ['600V', '30V', '11A']}
+{'category': 'MOSFET', 'part_number': 'MMD60R360QRH', 'specs': ['600V', '30V', '11A']}
+{'category': 'MOSFET', 'part_number': 'FH13N60K', 'specs': ['600V', '20V', '11A']}
+{'category': 'MOSFET', 'part_number': 'STFH24N60M2', 'specs': ['600V', '25V', '18A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'U20A6CIC', 'specs': ['600V', '20A', '180A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'PD008065LP', 'specs': ['650V', '22A', '48A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'U10A6CI', 'specs': ['600V', '10A', '100A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBRF20U80CTA', 'specs': ['80V', '20A', '150A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBRF2080CTL', 'specs': ['80V', '20A', '180A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBRF20150CTL', 'specs': ['150V', '20A', '220A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'S3D06065A', 'specs': ['650V', '24A', '70A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBR2080LFD', 'specs': ['80V', '20A', '150A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'SDURF10H60CT', 'specs': ['600V', '10A', '60A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'STF4060C', 'specs': ['60V', '40A', '200A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'SDURB3060CT', 'specs': ['600V', '30A', '110A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'U20A3CIC', 'specs': ['350V', '20A', '100A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MUR2060FD', 'specs': ['600V', '20A', '150A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'TMBRF40100CT', 'specs': ['100V', '40A', '200A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBR20150FT', 'specs': ['150V', '20A', '170A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'PTR4080CTF', 'specs': ['80V', '40A', '200A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'SDURK1060', 'specs': ['600V', '10A', '100A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'PTR40150CTF', 'specs': ['150V', '40A', '200A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'STF4080C', 'specs': ['80V', '40A', '300A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBRF20200CT', 'specs': ['200V', '20A', '150A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'STF40100C', 'specs': ['100V', '40A', '200A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'SDB20A80C', 'specs': ['80V', '40A', '200A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'SFN20A300C', 'specs': ['300V', '20A', '120A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'MBRF2080CTP', 'specs': ['80V', '20A', '150A']}
+{'category': 'RECTIFIER(DIODE)', 'part_number': 'TMBRF40150CT', 'specs': ['150V', '40A', '200A']}
+{'category': 'CAP', 'part_number': 'KU 500V 39uF 10*50', 'specs': ['500V', '720mA']}
+{'category': 'CAP', 'part_number': 'HML 50V 22uF 6.3*7', 'specs': ['50V', '260mA']}
+{'category': 'CAP', 'part_number': 'HML 50V 47uF 8*7', 'specs': ['50V', '450mA']}
+{'category': 'CAP', 'part_number': 'NXQ 35V 330uF 8*20', 'specs': ['35V', '1960mA']}
+{'category': 'CAP', 'part_number': 'LQ 25V 390uF 10*12.5', 'specs': ['25V', '1600mA']}
+{'category': 'CAP', 'part_number': 'NBC 160V 33uF 8*20', 'specs': ['35V', '1960mA']}
+{'category': 'CAP', 'part_number': 'NXQ 100V 68uF 8*20', 'specs': ['100V', '1040mA']}
+{'category': 'CAP', 'part_number': 'ML 50V 680uF 12.5*25', 'specs': ['50V', '2770mA']}
+{'category': 'CAP', 'part_number': 'NXQ 100V 220uF 12.5*25', 'specs': ['100V', '2210mA']}
+{'category': 'CAP', 'part_number': 'LY 50V 47uF  6*11', 'specs': ['50V', '228mA']}
+{'category': 'CAP', 'part_number': 'ZH 35V 270uF 10*12.5', 'specs': ['35V', '1700mA']}
+{'category': 'CAP', 'part_number': 'BL 160V 68uF 10*20', 'specs': ['160V', '835mA']}
+{'category': 'CAP', 'part_number': 'KS 500V 100uF 16*50', 'specs': ['500V', '1848mA']}
+{'category': 'CAP', 'part_number': 'LQ 25V 390uF 8*15', 'specs': ['25V', '1600mA']}
+{'category': 'CAP', 'part_number': 'MW 500V 4.7uF 10*12.5', 'specs': ['500V', '190mA']}
+{'category': 'CAP', 'part_number': 'KL 500V 82uF 12.5*50', 'specs': ['500V', '1375mA']}
+{'category': 'CAP', 'part_number': 'NLC 50V 47uF 6.3*11', 'specs': ['50V', '228mA']}
+{'category': 'CAP', 'part_number': 'NLC 50V 100uF 8*11.5', 'specs': ['50V', '260mA']}
+{'category': 'CAP', 'part_number': 'HML 50V 22uF 6.3*7', 'specs': ['50V', '330mA']}
+{'category': 'CAP', 'part_number': 'ZT 50V 47uF  8*7', 'specs': ['50V', '450mA']}
+{'category': 'CAP', 'part_number': 'ZH 50V 47uF 10*12.5', 'specs': ['50V', '1700mA']}
+{'category': 'CAP', 'part_number': 'KU 500V 120uF 16*60', 'specs': ['500V', '1620mA']}
+{'category': 'CAP', 'part_number': 'NXH 50V 22uF 5*11', 'specs': ['50V', '195mA']}
+{'category': 'CAP', 'part_number': 'KU 500V 100uF 16*50', 'specs': ['500V', '1320mA']}
+{'category': 'CAP', 'part_number': 'NBC 160V 68uF 10*20', 'specs': ['160V', '1000mA']}
+{'category': 'CAP', 'part_number': 'HML 50V 47uF 8*7', 'specs': ['50V', '350mA']}
+{'category': 'CAP', 'part_number': 'NXH 50V 47uF 6.3*11', 'specs': ['50V', '450mA']}
+{'category': 'CAP', 'part_number': 'NXQ 25V 390uF 10*12.5', 'specs': ['25V', '1700mA']}
+{'category': 'CAP', 'part_number': 'NXA 63V 100uF 10*12.5', 'specs': ['50V', '450mA']}
+{'category': 'CAP', 'part_number': 'NFK 500V 120uF 16*60', 'specs': ['500V', '1700mA']}
+{'category': 'CAP', 'part_number': 'NBA 160V 120uF 12.5*25', 'specs': ['160V', '1435mA']}
+{'category': 'CAP', 'part_number': 'CD261 500V 100uF 16*50', 'specs': ['500V', '1600mA']}
+{'category': 'CAP', 'part_number': 'KU 500V 82uF 16*50', 'specs': ['500V', '1236mA']}
+{'category': 'CAP', 'part_number': 'NXQ 35V 270uF 10*12.5', 'specs': ['35V', '1700mA']}
+{'category': 'CAP', 'part_number': 'ZT 50V 47uF 8*7', 'specs': ['50V', '350mA']}
+{'category': 'CAP', 'part_number': 'NXQ 50V 220uF 10*16', 'specs': ['50V', '1650mA']}
+{'category': 'CAP', 'part_number': 'ZH 50V 22uF 6.3*11', 'specs': ['50V', '230mA']}
+{'category': 'CAP', 'part_number': 'BL 160V 68uF 8*20', 'specs': ['160V', '835mA']}
+{'category': 'CAP', 'part_number': 'LQ 35V 270uF 10*12.5', 'specs': ['35V', '1700mA']}
+{'category': 'CAP', 'part_number': 'NFK 500V 82uF 16*50', 'specs': ['500V', '1143mA']}
+{'category': 'CAP', 'part_number': 'KJ 500V 120uF ZA 22*41', 'specs': ['500V', '1600mA']}
+{'category': 'CAP', 'part_number': 'NFR 500V 100uF 16*50', 'specs': ['500V', '1500mA']}
+{'category': 'CAP', 'part_number': 'ZT 50V 22uF 6.3*7', 'specs': ['50V', '260mA']}
+{'category': 'CAP', 'part_number': 'LY 50V 47uF 6.3*11', 'specs': ['50V', '228mA']}
+{'category': 'CAP', 'part_number': 'LQ 100V 220uF 12.5*25', 'specs': ['100V', '2210mA']}
+{'category': 'CAP', 'part_number': 'LY 50V 100uF 8*11.5', 'specs': ['50V', '324mA']}
+{'category': 'CAP', 'part_number': 'ML 35V 560uF 10*16', 'specs': ['35V', '1760mA']}
+{'category': 'CAP', 'part_number': 'KU 500V 82uF 12.5*50', 'specs': ['500V', '1320mA']}
+{'category': 'CAP', 'part_number': 'ZH 50V 22uF 5*11', 'specs': ['50V', '202mA']}
+{'category': 'CAP', 'part_number': 'ZH 50V 47uF 6.3*11', 'specs': ['50V', '330mA']}
+{'category': 'CAP', 'part_number': 'NXH 35V 330uF 10*12.5', 'specs': ['35V', '1330mA']}
+{'category': 'CAP', 'part_number': 'ML 35V 1000uF 12.5*20', 'specs': ['35V', '2480mA']}
+{'category': 'CAP', 'part_number': 'KU 450V 60uF 12.5*50', 'specs': ['450V', '998mA']}
+{'category': 'CAP', 'part_number': 'KJ 500V 82uF 16*50', 'specs': ['500V', '1340mA']}
+{'category': 'CAP', 'part_number': 'QY 50V 22uF 6.3*11', 'specs': ['50V', '228mA']}
+{'category': 'CAP', 'part_number': 'KJ 500V 100uF 16*50', 'specs': ['500V', '1500mA']}
+{'category': 'CAP', 'part_number': 'NLC 50V 100uF 8*11.5', 'specs': ['50V', '330mA']}
+{'category': 'CAP', 'part_number': 'NXA 63V 100uF 8*11.5', 'specs': ['63V', '690mA']}
+{'category': 'CAP', 'part_number': 'KU 450V 82uF 12.5*60', 'specs': ['450V', '998mA']}
+{'category': 'CAP', 'part_number': 'MU 200V 68uF 12.5*25', 'specs': ['200V', '1485mA']}
+{'category': 'CAP', 'part_number': 'CD261 500V 100uF 22*36', 'specs': ['500V', '1600mA']}
+{'category': 'CAP', 'part_number': 'NBA 400V 8.2uF 8*20', 'specs': ['400V', '1600mA']}
+{'category': 'CAP', 'part_number': 'HXL 50V 22uF 6.3*7', 'specs': ['50V', '260mA']}
+{'category': 'CAP', 'part_number': 'NXQ 25V 390uF 8*15', 'specs': ['25V', '390mA']}
+{'category': 'CAP', 'part_number': 'NXQ 35V 560uF 10*20', 'specs': ['50V', '2500mA']}
+{'category': 'CAP', 'part_number': 'ML 50V;680uF 12.5*25', 'specs': ['50V', '2770mA']}
+{'category': 'CAP', 'part_number': 'LY 50V 10uF  5*11', 'specs': ['50V', '108mA']}
+{'category': 'CAP', 'part_number': 'CD26H 450V 100uF 12.5*61', 'specs': ['450V', '900mA']}
+{'category': 'CAP', 'part_number': 'LZ 50V 100uF 8*11.5', 'specs': ['50V', '724mA']}
+{'category': 'CAP', 'part_number': 'KJ 500V 82uF 16*45', 'specs': ['500V', '1340mA']}
+{'category': 'CAP', 'part_number': 'NBA 450V 8.2uF 8*20', 'specs': ['450V', '400mA']}
+{'category': 'CAP', 'part_number': 'NXH 35V 560uF 10*16', 'specs': ['35V', '1760mA']}
+{'category': 'CAP', 'part_number': 'ML 35V 330uF 10*12.5', 'specs': ['50V', '1330mA']}
+{'category': 'CAP', 'part_number': 'ML 25V 1000uF 10*20', 'specs': ['35V', '1960mA']}
+{'category': 'CAP', 'part_number': 'NXB 35V 330uF 10*12.5', 'specs': ['35V', '1360mA']}
+{'category': 'CAP', 'part_number': 'NXQ 35V 330uF 8*20', 'specs': ['35V', '1960mA']}
+{'category': 'CAP', 'part_number': 'LQ 35V 330uF 8*20', 'specs': ['35V', '1960mA']}
+{'category': 'CAP', 'part_number': 'NXH 35V 1000uF 12.5*20', 'specs': ['35V', '2480mA']}
+{'category': 'CAP', 'part_number': 'NXH 25V 1000uF 10*20', 'specs': ['25V', '1960mA']}
+{'category': 'CAP', 'part_number': 'LQ 35V 330uF', 'specs': ['25V', '1700mA']}
+{'category': 'CAP', 'part_number': 'CD261 500V 120uF 22*41', 'specs': ['500V', '1560mA']}
+{'category': 'CAP', 'part_number': 'LQ 50V 220uF 10*16', 'specs': ['50V', '1650mA']}
+{'category': 'CAP', 'part_number': 'NLC 50V 22uF 5*11', 'specs': ['50V', '110mA']}
+{'category': 'TR', 'part_number': 'KTA1385D', 'specs': ['-60V', '-7V', '-5A', '-8A']}
+{'category': 'TR', 'part_number': '2SA3350U', 'specs': ['-50V', '-6V', '-3A', '-6A']}
+{'category': 'TR', 'part_number': '2SB115', 'specs': ['-60V', '-7V', '-5A', '-8A']}
+{'category': 'TR', 'part_number': 'BRKSD1616AG', 'specs': ['-60V', '-6V', '-1A', '-2A']}
+{'category': 'TR', 'part_number': 'KTC1008Y', 'specs': ['60V', '5V', '1A', '2A']}
+{'category': 'TR', 'part_number': 'KTD1624', 'specs': ['50V', '6V', '3A', '6A']}
