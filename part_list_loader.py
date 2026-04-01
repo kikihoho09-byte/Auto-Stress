@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import re
+import pickle
+import hashlib
 from typing import Callable, Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
@@ -173,6 +175,7 @@ def parse_workbook(
     동일 Loc 여러 행(벤더 대체)은 리스트에 순서대로 누적.
     """
     out: Dict[str, List[str]] = {}
+    out_seen: Dict[str, set] = {}
     wb = load_workbook(path, read_only=True, data_only=True)
     base = os.path.basename(path)
     try:
@@ -205,20 +208,30 @@ def parse_workbook(
             spec_c = cols.get("SPECIFICATION")
             vendor_c = cols.get("VENDOR")
             max_r = min(ws.max_row or hdr_r, 2000)
+            max_c_needed = max([c for c in [loc_c, pno_c, desc_c or 0, spec_c or 0, vendor_c or 0] if c])
             sheet_hits = 0
             last_loc_str = ""
             row_total = max(1, max_r - hdr_r)
-            for r in range(hdr_r + 1, max_r + 1):
-                loc_val = ws.cell(row=r, column=loc_c).value
-                pno = ws.cell(row=r, column=pno_c).value
+            # openpyxl read_only에서 ws.cell 반복 호출이 느릴 수 있어, 필요한 col만 values_only로 읽는다.
+            row_iter = ws.iter_rows(
+                min_row=hdr_r + 1,
+                max_row=max_r,
+                min_col=1,
+                max_col=max_c_needed,
+                values_only=True,
+            )
+            for idx0, row_vals in enumerate(row_iter, start=1):
+                # idx0는 header 아래부터 1
+                loc_val = row_vals[loc_c - 1] if loc_c <= len(row_vals) else None
+                pno = row_vals[pno_c - 1] if pno_c <= len(row_vals) else None
                 if loc_val is None and (pno is None or str(pno).strip() == ""):
-                    if progress_cb and (r - hdr_r) % 25 == 0:
-                        done = done_units + int(((r - hdr_r) / row_total) * 1000)
+                    if progress_cb and idx0 % 25 == 0:
+                        done = done_units + int((idx0 / row_total) * 1000)
                         progress_cb(done, total_units, f"{base}::{sheet_name}")
                     continue
-                desc = ws.cell(row=r, column=desc_c).value if desc_c else ""
-                spec = ws.cell(row=r, column=spec_c).value if spec_c else ""
-                vendor = ws.cell(row=r, column=vendor_c).value if vendor_c else ""
+                desc = row_vals[desc_c - 1] if desc_c and desc_c <= len(row_vals) else ""
+                spec = row_vals[spec_c - 1] if spec_c and spec_c <= len(row_vals) else ""
+                vendor = row_vals[vendor_c - 1] if vendor_c and vendor_c <= len(row_vals) else ""
                 blob = " ".join(
                     filter(None, [str(loc_val or ""), str(pno or ""), str(desc or ""), str(spec or ""), str(vendor or "")])
                 )
@@ -249,10 +262,13 @@ def parse_workbook(
                     if len(piece) < 3:
                         continue
                     out.setdefault(piece, [])
-                    if packed not in out[piece]:
+                    if piece not in out_seen:
+                        out_seen[piece] = set()
+                    if packed not in out_seen[piece]:
+                        out_seen[piece].add(packed)
                         out[piece].append(packed)
-                if progress_cb and (r - hdr_r) % 25 == 0:
-                    done = done_units + int(((r - hdr_r) / row_total) * 1000)
+                if progress_cb and idx0 % 25 == 0:
+                    done = done_units + int((idx0 / row_total) * 1000)
                     progress_cb(done, total_units, f"{base}::{sheet_name}")
             done_units += 1000
             if progress_cb:
@@ -275,6 +291,50 @@ def merge_pl_dicts(
     return a
 
 
+def _merge_pl_dicts_fast(
+    a: Dict[str, List[str]],
+    a_seen: Dict[str, set],
+    b: Dict[str, List[str]],
+) -> None:
+    """a에 b를 합치되, membership은 set으로 가속."""
+    for k, lst in b.items():
+        if k not in a:
+            a[k] = []
+            a_seen[k] = set()
+        seen = a_seen.setdefault(k, set())
+        for x in lst:
+            if x in seen:
+                continue
+            seen.add(x)
+            a[k].append(x)
+
+
+def _file_fingerprint(path: str) -> tuple[str, int, int]:
+    st = os.stat(path)
+    return (os.path.basename(path), int(st.st_size), int(st.st_mtime))
+
+
+def _compute_cache_key(kind: str, paths: List[str]) -> str:
+    h = hashlib.sha256()
+    h.update(kind.encode("utf-8", "ignore"))
+    for p in sorted(paths, key=lambda s: s.lower()):
+        try:
+            bn, sz, mt = _file_fingerprint(p)
+        except OSError:
+            bn, sz, mt = (os.path.basename(p), 0, 0)
+        h.update(b"\0")
+        h.update(bn.encode("utf-8", "ignore"))
+        h.update(str(sz).encode("ascii"))
+        h.update(str(mt).encode("ascii"))
+    return h.hexdigest()
+
+
+def _cache_paths(base_dir: str, cache_key: str) -> str:
+    cache_dir = os.path.join(base_dir, "__pl_cache__")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, f"pl_index_{cache_key}.pkl")
+
+
 def load_part_list_index(
     base_dir: str,
     log: Optional[Callable[[str], None]] = None,
@@ -292,18 +352,33 @@ def load_part_list_index(
     files = sorted(
         f for f in os.listdir(folder) if f.lower().endswith(".xlsx") and not f.startswith("~$")
     )
+    full_paths = [os.path.join(folder, fn) for fn in files]
+    cache_key = _compute_cache_key("folder", full_paths)
+    cache_file = _cache_paths(base_dir, cache_key)
+    if os.path.isfile(cache_file):
+        try:
+            with open(cache_file, "rb") as f:
+                cached = pickle.load(f)
+            if isinstance(cached, dict):
+                if log:
+                    log(f"[PL] 캐시 로드: {os.path.basename(cache_file)} (파일 {len(files)}개)")
+                return cached
+        except Exception:
+            pass
     total = len(files)
     if progress_cb:
         progress_cb(0, total, "시작")
-    for idx, fn in enumerate(files, start=1):
-        path = os.path.join(folder, fn)
+    merged: Dict[str, List[str]] = {}
+    merged_seen: Dict[str, set] = {}
+    for idx, path in enumerate(full_paths, start=1):
+        fn = os.path.basename(path)
         try:
             def _inner(done, total_inner, name):
                 # 파일 단위 진행률을 파일 내부 진행률로 세분화
                 global_done = (idx - 1) + ((done / total_inner) if total_inner else 1.0)
                 progress_cb(global_done, total, name) if progress_cb else None
             part = parse_workbook(path, log=log, progress_cb=_inner if progress_cb else None)
-            merge_pl_dicts(merged, part)
+            _merge_pl_dicts_fast(merged, merged_seen, part)
         except Exception as e:
             if log:
                 log(f"[PL] 건너뜀 {fn}: {e}")
@@ -313,6 +388,13 @@ def load_part_list_index(
         nloc = len(merged)
         nent = sum(len(v) for v in merged.values())
         log(f"[PL] 로드 완료: 파일 {len(files)}개 → Loc {nloc}개, 후보 {nent}건")
+    try:
+        with open(cache_file, "wb") as f:
+            pickle.dump(merged, f, protocol=pickle.HIGHEST_PROTOCOL)
+        if log:
+            log(f"[PL] 캐시 저장: {os.path.basename(cache_file)}")
+    except Exception:
+        pass
     return merged
 
 
@@ -324,11 +406,26 @@ def load_part_list_from_paths(
     """
     사용자가 선택한 PL 파일 목록에서 Loc → 정규화 품명 리스트 생성.
     """
-    merged: Dict[str, List[str]] = {}
     valid = [
         p for p in paths
         if p and os.path.isfile(p) and p.lower().endswith((".xlsx", ".xlsm")) and not os.path.basename(p).startswith("~$")
     ]
+    # cache는 첫 path의 base_dir(프로젝트 루트) 기준으로 둔다.
+    base_dir = os.path.dirname(os.path.abspath(valid[0])) if valid else os.getcwd()
+    cache_key = _compute_cache_key("paths", valid)
+    cache_file = _cache_paths(base_dir, cache_key)
+    if os.path.isfile(cache_file):
+        try:
+            with open(cache_file, "rb") as f:
+                cached = pickle.load(f)
+            if isinstance(cached, dict):
+                if log:
+                    log(f"[PL] 선택 파일 캐시 로드: {os.path.basename(cache_file)} (파일 {len(valid)}개)")
+                return cached
+        except Exception:
+            pass
+    merged: Dict[str, List[str]] = {}
+    merged_seen: Dict[str, set] = {}
     total = len(valid)
     if progress_cb:
         progress_cb(0, total, "시작")
@@ -338,7 +435,7 @@ def load_part_list_from_paths(
                 global_done = (idx - 1) + ((done / total_inner) if total_inner else 1.0)
                 progress_cb(global_done, total, name) if progress_cb else None
             part = parse_workbook(path, log=log, progress_cb=_inner if progress_cb else None)
-            merge_pl_dicts(merged, part)
+            _merge_pl_dicts_fast(merged, merged_seen, part)
         except Exception as e:
             if log:
                 log(f"[PL] 건너뜀 {os.path.basename(path)}: {e}")
@@ -348,6 +445,13 @@ def load_part_list_from_paths(
         nloc = len(merged)
         nent = sum(len(v) for v in merged.values())
         log(f"[PL] 선택 파일 로드 완료: 파일 {len(valid)}개 → Loc {nloc}개, 후보 {nent}건")
+    try:
+        with open(cache_file, "wb") as f:
+            pickle.dump(merged, f, protocol=pickle.HIGHEST_PROTOCOL)
+        if log:
+            log(f"[PL] 선택 파일 캐시 저장: {os.path.basename(cache_file)}")
+    except Exception:
+        pass
     return merged
 
 

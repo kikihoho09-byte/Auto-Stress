@@ -17,8 +17,11 @@ from datetime import datetime
 import re
 import openpyxl
 from openpyxl import load_workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.cell import range_boundaries
+from openpyxl.utils.units import points_to_pixels
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.cell.text import InlineFont
 from openpyxl.cell.rich_text import TextBlock, CellRichText
 
@@ -47,9 +50,12 @@ except ImportError:
 # ─────────────────────────────────────────────
 # 경로 설정
 # ─────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller frozen 환경에서는 리소스가 sys._MEIPASS 아래에 풀립니다.
+# 일반 실행 시에는 __file__ 기준 경로를 사용합니다.
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 DB_DIR   = os.path.join(BASE_DIR, "DB")
 DB_FILE  = os.path.join(DB_DIR, "Database.xlsx")
+STRESS_RULE_FILE = os.path.join(DB_DIR, "Stress Rule.xlsx")
 CONFIG_FILE = os.path.join(BASE_DIR, "app_config.json")
 RECENT_MAX = 12
 LOG_HISTORY_MAX = 3000
@@ -110,6 +116,45 @@ def normalize_part_key(s):
     if not s:
         return ""
     return re.sub(r"[\s\-_]+", "", str(s).strip()).upper()
+
+
+def _strip_cap_ripple_brackets_db(s):
+    """CAP 리플 전류 표기에서 '[100Khz]' 등 대괄호 블록 제거."""
+    if s is None:
+        return ""
+    t = str(s).strip()
+    t = re.sub(r"\s*\[[^\]]+\]", "", t)
+    return " ".join(t.split()).strip()
+
+
+def _cap_db_d_key(v) -> str:
+    t = str(v or "").strip().lower().replace("↓", "").replace("↑", "")
+    t = " ".join(t.split())
+    return re.sub(r"\s+", "", t)
+
+
+def _cap_db_e_key(v) -> str:
+    return _cap_db_d_key(_strip_cap_ripple_brackets_db(v))
+
+
+def cap_import_weak_dup_key(part_name: str, specs: list) -> tuple:
+    """CAP: 시리즈(첫 토큰) + D열 + E열(리플·주파수 제거) — 불완전 행 재추가 방지."""
+    s = str(part_name or "").strip()
+    tok = s.split()[0] if s else ""
+    sk = normalize_part_key(tok)
+    if len(specs) < 2:
+        return (sk, "", "")
+    return (sk, _cap_db_d_key(specs[0]), _cap_db_e_key(specs[1]))
+
+
+def cap_part_row_is_incomplete(part_name: str) -> bool:
+    """CAP C열에 uF 또는 치수( n*n )가 없으면 불완전."""
+    s = str(part_name or "")
+    if not re.search(r"\d+(?:\.\d+)?\s*(?:uF|UF|μF|ΜF)", s, re.I):
+        return True
+    if not re.search(r"\d+(?:\.\d+)?\s*[*xX]\s*\d+(?:\.\d+)?", s):
+        return True
+    return False
 
 def validate_workbook_quick(path):
     """
@@ -254,6 +299,92 @@ def append_part_to_database(category_ui_key, part_name, specs):
         wb.save(DB_FILE)
     finally:
         wb.close()
+
+
+def batch_append_parts_to_database(entries, log_func=None):
+    """
+    여러 부품을 Database.xlsx에 한 번만 열어 추가한다.
+    entries: [{"category": "CAP", "part_name": "PN", "specs": ["a","b"]}, ...]
+    같은 시트·같은 normalize_part_key 는 건너뛴다(이미 있으면 skipped_dup).
+    반환: {"added": int, "skipped_dup": int, "skipped_invalid": int, "errors": [str]}
+    """
+    log = log_func or (lambda s: None)
+    result = {"added": 0, "skipped_dup": 0, "skipped_invalid": 0, "errors": []}
+    wb = load_workbook(DB_FILE, read_only=False, keep_vba=False)
+    cache = {}
+    try:
+        for cat in DB_CATEGORY_SCHEMA:
+            sn = find_db_sheet_name(wb, cat)
+            if not sn:
+                continue
+            ws = wb[sn]
+            keys = set()
+            cap_weak = set()
+            last = 2
+            for r in range(3, ws.max_row + 1):
+                v = ws.cell(row=r, column=3).value
+                if v is None or not str(v).strip():
+                    continue
+                c3 = str(v).strip()
+                keys.add(normalize_part_key(c3))
+                if cat == "CAP":
+                    d4 = ws.cell(row=r, column=4).value
+                    e5 = ws.cell(row=r, column=5).value
+                    cap_weak.add(cap_import_weak_dup_key(c3, [d4, e5]))
+                last = r
+            cache[cat] = {"ws": ws, "keys": keys, "last": last}
+            if cat == "CAP":
+                cache[cat]["cap_weak"] = cap_weak
+
+        for ent in entries:
+            cat = ent.get("category")
+            pn = str(ent.get("part_name") or "").strip()
+            specs = ent.get("specs") or []
+            if cat not in DB_CATEGORY_SCHEMA:
+                result["skipped_invalid"] += 1
+                result["errors"].append(f"{pn or '?'}: 알 수 없는 카테고리 {cat}")
+                continue
+            _, n_spec = DB_CATEGORY_SCHEMA[cat]
+            if len(specs) != n_spec:
+                result["skipped_invalid"] += 1
+                result["errors"].append(f"{pn}: 스펙 개수 오류 (요구 {n_spec}, 실제 {len(specs)})")
+                continue
+            if not pn:
+                result["skipped_invalid"] += 1
+                continue
+            if cat not in cache:
+                result["errors"].append(f"{pn}: 시트 없음 — {cat}")
+                continue
+            st = cache[cat]
+            key_new = normalize_part_key(pn)
+            if key_new in st["keys"]:
+                result["skipped_dup"] += 1
+                continue
+            if cat == "CAP" and st.get("cap_weak") is not None:
+                wk = cap_import_weak_dup_key(pn, specs)
+                if cap_part_row_is_incomplete(pn) and wk in st["cap_weak"]:
+                    result["skipped_dup"] += 1
+                    continue
+            new_r = st["last"] + 1
+            st["ws"].cell(row=new_r, column=3).value = pn
+            for i, val in enumerate(specs):
+                st["ws"].cell(row=new_r, column=4 + i).value = str(val).strip() if val is not None else ""
+            st["keys"].add(key_new)
+            if cat == "CAP" and st.get("cap_weak") is not None:
+                st["cap_weak"].add(cap_import_weak_dup_key(pn, specs))
+            st["last"] = new_r
+            result["added"] += 1
+
+        wb.save(DB_FILE)
+        log(f"[batch_append] 저장 완료: 추가 {result['added']}, 이미있음 {result['skipped_dup']}, 무효 {result['skipped_invalid']}")
+    except Exception as e:
+        result["errors"].append(str(e))
+        log(f"[batch_append] 오류: {e}")
+        raise
+    finally:
+        wb.close()
+    return result
+
 
 # ─────────────────────────────────────────────
 # Database 로드 (ZIP/XML 직접 파싱 - 속도 및 정확도 최대화)
@@ -486,6 +617,278 @@ def backup_excel(excel_path, log_func):
     return backup_path
 
 
+def _col_width_to_pixels(ws, col_idx: int) -> int:
+    """openpyxl 컬럼 너비(문자 단위)를 대략 픽셀로 변환."""
+    letter = get_column_letter(col_idx)
+    w = ws.column_dimensions[letter].width
+    if w is None:
+        w = 8.43  # Excel default
+    return int(w * 7 + 5)
+
+
+def _row_height_to_pixels(ws, row_idx: int) -> int:
+    """openpyxl 행 높이(pt)를 픽셀로 변환."""
+    h = ws.row_dimensions[row_idx].height
+    if h is None:
+        h = 15  # Excel default in points
+    return int(points_to_pixels(h))
+
+
+def get_range_pixel_size(ws, target_range: str):
+    """
+    예: 'AB14:CM20' 범위의 픽셀 너비/높이 계산.
+    """
+    min_col, min_row, max_col, max_row = range_boundaries(target_range)
+    width_px = sum(_col_width_to_pixels(ws, c) for c in range(min_col, max_col + 1))
+    height_px = sum(_row_height_to_pixels(ws, r) for r in range(min_row, max_row + 1))
+    anchor = f"{get_column_letter(min_col)}{min_row}"
+    return width_px, height_px, anchor
+
+
+def add_image_fit_to_range(ws, image_path: str, target_range: str, mode: str = "contain", padding_px: int = 2):
+    """
+    지정 범위 크기에 맞춰 이미지 자동 리사이즈 후 삽입.
+    - mode='contain': 비율 유지, 잘림 없이 범위 안에 맞춤
+    - mode='cover': 비율 유지, 범위를 꽉 채움(일부 잘릴 수 있음)
+    """
+    img = XLImage(image_path)
+    tw, th, anchor = get_range_pixel_size(ws, target_range)
+    tw = max(1, tw - padding_px * 2)
+    th = max(1, th - padding_px * 2)
+    iw, ih = max(1, int(img.width)), max(1, int(img.height))
+    if mode == "cover":
+        scale = max(tw / iw, th / ih)
+    else:
+        scale = min(tw / iw, th / ih)
+    img.width = max(1, int(iw * scale))
+    img.height = max(1, int(ih * scale))
+    img.anchor = anchor
+    ws.add_image(img)
+    return img.width, img.height, anchor
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"[\s\-_]+", "", str(s or "")).upper()
+
+
+def _is_schematic_ref_token(tok: str) -> bool:
+    """로케이션(RefDes)처럼 보이는 짧은 토큰 (예: CP815S, QM801CS, ICM801S)."""
+    t = str(tok or "").strip()
+    if not t or len(t) > 22 or len(t) < 3:
+        return False
+    return bool(re.match(r"^[A-Z]{1,6}\d{1,5}[A-Z0-9]{0,4}$", t, re.I))
+
+
+# Stress Rule 시트 1열에 같이 실리는 양식/헤더용 키 — 실제 부품 Function이 아님
+_RULE_SHEET_TEMPLATE_FUNC_KEYS = frozenset(
+    {
+        "FUNCTION",
+        "RESULT",
+        "SPEC",
+        "PARTNUMBER",
+        "PARTNUBMER",
+        "LOCNUMPARTNUMBER",
+        "LOCNUMPARTNUBMER",
+    }
+)
+
+_MPN_LIKE_TOKEN = re.compile(r"^[A-Z][A-Z0-9\-]{7,}$", re.I)
+
+
+def _strip_mpn_tokens_for_display(text: str) -> str:
+    """제조사 MPN(긴 알파넘)은 뺀 뒤 PL 스펙 위주 문자열만 남긴다."""
+    s = str(text or "").strip()
+    if not s:
+        return s
+    tokens = re.split(r"\s+", s)
+    kept = [t for t in tokens if t and not _MPN_LIKE_TOKEN.match(t)]
+    out = " ".join(kept).strip()
+    return out if out else s
+
+
+def _mr_row_has_schematic_ref(m_values: list) -> bool:
+    """M~R 중 로케이션(RefDes) 토큰이 하나라도 있을 때만 미일치 신규 후보로 친다."""
+    for m in m_values:
+        for w in re.split(r"[\s/\n\r]+", str(m)):
+            w = w.strip(" ,.;")
+            if _is_schematic_ref_token(w):
+                return True
+    return False
+
+
+def _is_mr_part_sheet_header_row(m_values: list, joined: str) -> bool:
+    """Loc. Num. Part Number 등 M~R 헤더 행이면 신규 후보에서 제외."""
+    blob = _norm_text(joined)
+    if not blob:
+        return False
+    if "LOC" in blob and "NUM" in blob and ("PARTNUB" in blob or "PARTNUM" in blob):
+        return True
+    if "LOCNUMPART" in blob:
+        return True
+    if "PARTNUBMER" in blob:
+        return True
+    if len(m_values) == 1:
+        only = _norm_text(str(m_values[0]))
+        if "LOCNUM" in only and "PART" in only:
+            return True
+    return False
+
+
+def _resolve_rule_func_key_for_cell(tk: str, rule_applicable: dict) -> str | None:
+    """G~L 한 칸에서 rule_applicable에 대응하는 키를 찌른다. 양식용 키(FUNCTION 등)는 무시."""
+    if not tk or not rule_applicable:
+        return None
+    if tk in rule_applicable and tk not in _RULE_SHEET_TEMPLATE_FUNC_KEYS:
+        return tk
+    for rk in rule_applicable.keys():
+        if not rk or rk in _RULE_SHEET_TEMPLATE_FUNC_KEYS:
+            continue
+        if rk in tk or tk in rk:
+            return rk
+    return None
+
+
+def _unmatched_group_key_and_display(pn_str: str) -> tuple[str, str]:
+    """
+    미일치 검색어 문자열을 '실제 부품·스펙' 기준으로 묶기 위한 (키, 표시문구).
+    '로케이션 / 품목·스펙' 형태면 앞의 로케이션은 그룹 키에서 제외해 동일 품목을 1건으로 합친다.
+    """
+    s = str(pn_str or "").strip()
+    if not s:
+        return ("", "")
+    s_one = re.sub(r"[\r\n]+", " ", s)
+    segs = [p.strip() for p in re.split(r"\s*/\s*", s_one) if p.strip()]
+    if len(segs) >= 2 and _is_schematic_ref_token(segs[0]):
+        identity = " / ".join(segs[1:]).strip()
+        if identity:
+            identity = _strip_mpn_tokens_for_display(identity)
+            disp = identity if len(identity) <= 180 else identity[:177] + "..."
+            return (_norm_text(identity), disp)
+    if len(segs) == 1:
+        words = segs[0].split()
+        if len(words) >= 2 and _is_schematic_ref_token(words[0]):
+            identity = " ".join(words[1:]).strip()
+            if identity:
+                identity = _strip_mpn_tokens_for_display(identity)
+                disp = identity if len(identity) <= 180 else identity[:177] + "..."
+                return (_norm_text(identity), disp)
+    s_disp = _strip_mpn_tokens_for_display(s_one)
+    disp = s_disp if len(s_disp) <= 180 else s_disp[:177] + "..."
+    return (_norm_text(s_disp), disp)
+
+
+def _extract_location_label_from_unmatched(pn_str: str) -> str | None:
+    """미일치 문자열에서 로케이션(RefDes)만 뽑는다. 행 번호 대신 표시용."""
+    s = str(pn_str or "").strip()
+    if not s:
+        return None
+    s_one = re.sub(r"[\r\n]+", " ", s)
+    segs = [p.strip() for p in re.split(r"\s*/\s*", s_one) if p.strip()]
+    if not segs:
+        return None
+    if _is_schematic_ref_token(segs[0]):
+        return segs[0]
+    if len(segs) == 1:
+        words = segs[0].split()
+        if words and _is_schematic_ref_token(words[0]):
+            return words[0]
+    return None
+
+
+def _rule_type_key(type_text: str) -> str:
+    t = str(type_text or "").upper()
+    if "WORST" in t:
+        # 90~264/264~90의 worst transient 계열
+        return "WORST"
+    if "NORMAL" in t:
+        return "NORMAL"
+    if "TURN-ON" in t or "TURN ON" in t:
+        return "TURN_ON"
+    if "TURN-OFF" in t or "TURN OFF" in t:
+        return "TURN_OFF"
+    # fallback: 검색되는 키워드 기반
+    if "TURN" in t and "ON" in t:
+        return "TURN_ON"
+    if "TURN" in t and "OFF" in t:
+        return "TURN_OFF"
+    if "TRANSIENT" in t:
+        return "TRANSIENT"
+    return _norm_text(t)[:12]
+
+
+def _rule_group_key(group_text: str) -> str:
+    g = str(group_text or "").upper()
+    g = g.replace(" ", "")
+    # 90Vac / 264Vac / 90~264Vac / 264~90Vac
+    if "90VAC" in g and "264" not in g:
+        return "90VAC"
+    if "264VAC" in g and "90" not in g:
+        return "264VAC"
+    # 90 ~ 264Vac
+    # (중요) 설명 문장처럼 90V/264V가 들어있는 경우는 제외하려고 VAC 문자열이 같이 있을 때만 그룹으로 판단
+    if "90" in g and "264" in g and "VAC" in g:
+        # 방향성(앞에 나온 숫자 기준)
+        i90 = g.find("90")
+        i264 = g.find("264")
+        return "90_264VAC" if i90 < i264 else "264_90VAC"
+    return _norm_text(g)[:16]
+
+
+def _load_stress_rule_index(rule_xlsx: str, log_func=None):
+    from openpyxl import load_workbook as _lb
+
+    # merged cell 값을 읽어야 하므로 read_only=False로 로드
+    wb = _lb(rule_xlsx, read_only=False, data_only=True)
+    ws = wb.active  # Sheet1
+
+    # rule 함수 행: col1이 채워진 행부터 끝까지
+    rule_func_rows = []
+    for r in range(1, ws.max_row + 1):
+        v = ws.cell(row=r, column=1).value
+        if v is None or str(v).strip() == "":
+            continue
+        rule_func_rows.append(r)
+
+    # 조건 헤더 열: row2에 값이 있는 컬럼
+    cond_cols = []
+    for c in range(2, ws.max_column + 1):
+        tv = ws.cell(row=2, column=c).value
+        if tv is None or str(tv).strip() == "":
+            continue
+        cond_cols.append(c)
+
+    cond_key_by_rule_col = {}
+    for c in cond_cols:
+        group_text = ws.cell(row=1, column=c).value
+        # 병합셀로 인해 (row=1, col=c) 위치엔 값이 None으로 남는 경우가 많다.
+        if group_text is None:
+            for mrange in ws.merged_cells.ranges:
+                if mrange.min_row <= 1 <= mrange.max_row and mrange.min_col <= c <= mrange.max_col:
+                    group_text = ws.cell(row=mrange.min_row, column=mrange.min_col).value
+                    break
+        type_text = ws.cell(row=2, column=c).value
+        cond_key_by_rule_col[c] = f"{_rule_group_key(group_text)}:{_rule_type_key(type_text)}"
+
+    rule_applicable = {}
+    for r in rule_func_rows:
+        func = ws.cell(row=r, column=1).value
+        func_key = _norm_text(func)
+        rule_applicable.setdefault(func_key, {})
+        for c in cond_cols:
+            val = ws.cell(row=r, column=c).value
+            cond_key = cond_key_by_rule_col[c]
+            rule_applicable[func_key][cond_key] = not (val is None or str(val).strip() == "")
+
+    try:
+        wb.close()
+    except Exception:
+        pass
+
+    if log_func:
+        log_func(f"[룰] Stress Rule loaded: funcs={len(rule_applicable)}, conds={len(cond_cols)}")
+    return rule_applicable, list(cond_key_by_rule_col.values())
+
+
 def process_excel(excel_path, db_records, log_func, options=None):
     opts = options or {}
     do_norm = opts.get("normalize_cell_text", True)
@@ -513,11 +916,142 @@ def process_excel(excel_path, db_records, log_func, options=None):
         ws.cell(row=row_idx, column=col_idx).value = value
         return (row_idx, col_idx, False)
 
+    # X(비활성) 표시용 셀 스타일: "X 텍스트만"이 아니라 셀 자체를 그을리게 보이도록 처리
+    _disabled_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+    _disabled_font = Font(color="7F7F7F", strike=True)
+    _disabled_alignment = Alignment(horizontal="center", vertical="center")
+    _disabled_border_side = Side(style="thin", color="BFBFBF")
+    _disabled_border = Border(
+        left=_disabled_border_side,
+        right=_disabled_border_side,
+        top=_disabled_border_side,
+        bottom=_disabled_border_side,
+    )
+
+    def _apply_disabled_style(row_idx, col_idx):
+        addr = f"{get_column_letter(col_idx)}{row_idx}"
+        # 병합된 범위면 범위 전체에 스타일을 적용(비활성처럼 보이게)
+        for mrange in ws.merged_cells.ranges:
+            if addr in mrange:
+                for rr in range(mrange.min_row, mrange.max_row + 1):
+                    for cc in range(mrange.min_col, mrange.max_col + 1):
+                        cell = ws.cell(row=rr, column=cc)
+                        cell.fill = _disabled_fill
+                        cell.font = _disabled_font
+                        cell.alignment = _disabled_alignment
+                        cell.border = _disabled_border
+                return
+
+        cell = ws.cell(row=row_idx, column=col_idx)
+        cell.fill = _disabled_fill
+        cell.font = _disabled_font
+        cell.alignment = _disabled_alignment
+        cell.border = _disabled_border
+
+    def _detect_remote_start_row():
+        # Remote On/Off(Stand By Block) 구역은 X 마킹 대상 제외.
+        # 단, "Standby mode" 같은 다른 문구 때문에 오탐되지 않도록
+        # 반드시 "REMOTE" + "ON/OFF" 조합이 포함된 헤더 셀만 사용한다.
+        max_r = min(ws.max_row or 1, 2000)
+        # Remote 헤더는 보통 왼쪽(대략 A~D)에 위치하므로 컬럼 범위를 좁혀 오탐을 줄인다.
+        max_c = min(ws.max_column or 1, 10)
+        try:
+            for r in range(1, max_r + 1):
+                for c in range(1, max_c + 1):
+                    v = ws.cell(row=r, column=c).value
+                    if not v:
+                        continue
+                    t = str(v).upper().replace(" ", "")
+                    if "REMOTE" in t and ("ON/OFF" in t or "ONOFF" in t or ("ON" in t and "OFF" in t)):
+                        return r
+            return None
+        except Exception:
+            return None
+
+    def _detect_template_cond_col_mapping(expected_cond_keys):
+        # 템플릿에서 rule의 cond_key에 해당하는 컬럼을 찾는다.
+        # cond_key 형식: {group}:{type} (예: 90VAC:NORMAL)
+        header_row_scan_max = 20
+        col_scan_max = min(ws.max_column or 1, 250)
+
+        group_by_col = {}
+        # merged 범위 기반 group 매핑
+        try:
+            for rng in ws.merged_cells.ranges:
+                if rng.min_row <= header_row_scan_max and rng.max_row <= header_row_scan_max:
+                    v = ws.cell(row=rng.min_row, column=rng.min_col).value
+                    if not v:
+                        continue
+                    g_key = _rule_group_key(v)
+                    if g_key in ("90VAC", "264VAC", "90_264VAC", "264_90VAC"):
+                        for c in range(rng.min_col, rng.max_col + 1):
+                            group_by_col[c] = g_key
+        except Exception:
+            pass
+
+        # 비-merged도 보완
+        for c in range(1, col_scan_max + 1):
+            if c in group_by_col:
+                continue
+            for r in range(1, header_row_scan_max + 1):
+                v = ws.cell(row=r, column=c).value
+                if not v:
+                    continue
+                g_key = _rule_group_key(v)
+                if g_key in ("90VAC", "264VAC", "90_264VAC", "264_90VAC"):
+                    group_by_col[c] = g_key
+                    break
+
+        type_by_col = {}
+        for c in range(1, col_scan_max + 1):
+            for r in range(2, header_row_scan_max + 1):
+                v = ws.cell(row=r, column=c).value
+                if not v:
+                    continue
+                t = str(v).upper()
+                if ("NORMAL" in t) or ("TURN" in t and ("ON" in t or "OFF" in t)) or ("WORST" in t) or ("TRANSIENT" in t):
+                    type_by_col[c] = _rule_type_key(v)
+                    break
+
+        cond_col_map = {}
+        for c, g_key in group_by_col.items():
+            if c not in type_by_col:
+                continue
+            t_key = type_by_col[c]
+            cond_key = f"{g_key}:{t_key}"
+            if cond_key in expected_cond_keys:
+                cond_col_map[cond_key] = c
+        return cond_col_map
+
     matched           = 0
     checked           = 0
     unmatched         = []
     row_step          = 7
     row               = 14
+
+    # Stress Rule 기반 X 마킹 사전 준비 (Stress Analysis 구역만)
+    rule_applicable = {}
+    cond_cols_map = {}
+    remote_start_row = None
+    remote_block_start_row = None
+    try:
+        if os.path.exists(STRESS_RULE_FILE):
+            rule_applicable, rule_cond_key_list = _load_stress_rule_index(STRESS_RULE_FILE, log_func=log_func)
+            cond_cols_map = _detect_template_cond_col_mapping(set(rule_cond_key_list))
+        remote_start_row = _detect_remote_start_row()
+        if remote_start_row is not None and remote_start_row >= 14:
+            # block 시작 행(14,21,28,...) 기준으로 스킵
+            remote_block_start_row = 14 + 7 * ((remote_start_row - 14) // 7)
+        if not cond_cols_map:
+            log_func("[X] Stress Rule cond 컬럼 매핑 실패(헤더 구조가 다를 수 있음) - X 마킹 건너뜀", color="yellow")
+        else:
+            log_func(
+                f"[X] Stress Rule 기반 X 마킹 준비 완료 - cond_cols={len(cond_cols_map)}, "
+                f"remote_start={remote_start_row}, remote_block_start={remote_block_start_row}",
+                color="green",
+            )
+    except Exception as e:
+        log_func(f"[X] Stress Rule 준비 실패: {e}", color="yellow")
 
     def find_real_max_row(ws, start_row=14):
         # 엑셀의 가짜 max_row(100만 행) 문제를 해결하기 위해 
@@ -535,8 +1069,25 @@ def process_excel(excel_path, db_records, log_func, options=None):
     real_max = find_real_max_row(ws)
     log_func(f"[진행] 실제 데이터 탐지 완료: 행 {real_max}까지 처리를 시작합니다.")
 
-    # 양식이 7행 블록 구조이므로 블록 시작 행(14, 21, 28, ...)만 검사
-    rows_to_check = list(range(14, real_max + 1, row_step))
+    # 양식이 7행 블록 구조이므로, "블록 시작행만"이 아니라
+    # 블록 내부에서도 M~R(13~18)에 실제 데이터가 있는 행만 검사한다.
+    # 특히 Remote On/Off 섹션은 블록 시작행이 아니라 내부 행에 부품명이 들어있는 경우가 있어 누락이 발생한다.
+    rows_to_check = []
+    seen = set()
+    block_starts = list(range(14, real_max + 1, row_step))
+    for bs in block_starts:
+        for r in range(bs, min(bs + row_step, real_max + 1)):
+            has_m = False
+            for c in range(13, 19):  # M~R
+                if ws.cell(row=r, column=c).value:
+                    has_m = True
+                    break
+            if has_m and r not in seen:
+                seen.add(r)
+                rows_to_check.append(r)
+
+    if not rows_to_check:
+        rows_to_check = list(range(14, real_max + 1, row_step))
     total_rows = max(1, len(rows_to_check))
     if callable(progress_cb):
         progress_cb(0, total_rows, f"{src_name} 시작")
@@ -544,6 +1095,78 @@ def process_excel(excel_path, db_records, log_func, options=None):
     for row_idx, row in enumerate(rows_to_check, start=1):
         if callable(progress_cb):
             progress_cb(row_idx, total_rows, f"{src_name} 처리 중")
+
+        # "function 있는 칸만" 신규 부품 카운팅에 반영하기 위해,
+        # 현재 row의 G~L(Function 열)에서 실제 Function 키를 찾는다.
+        # (템플릿의 헤더/설명 문구 때문에 M~R에 글이 있어도 Function이 없는 행은 제외)
+        func_key_for_count = None
+        if rule_applicable:
+            for col_idx in range(7, 13):  # G~L
+                v = ws.cell(row=row, column=col_idx).value
+                if not v:
+                    continue
+                tk = _norm_text(v)
+                fk = _resolve_rule_func_key_for_cell(tk, rule_applicable)
+                if fk:
+                    func_key_for_count = fk
+                    break
+        else:
+            for col_idx in range(7, 13):
+                v = ws.cell(row=row, column=col_idx).value
+                if not v:
+                    continue
+                t = str(v).strip().upper()
+                raw_norm = _norm_text(v)
+                if (
+                    t
+                    and raw_norm not in _RULE_SHEET_TEMPLATE_FUNC_KEYS
+                    and t not in ("FUNCTION", "RESULT", "SPEC.")
+                ):
+                    func_key_for_count = raw_norm
+                    break
+
+        # Stress Analysis 구역에서만 파형 슬롯/결과값 비활성 칸 X 마킹(텍스트는 비움)
+        if rule_applicable and cond_cols_map:
+            # 해당 row가 속한 7행 블록의 시작행을 기준으로 "슬롯 행/결과 행"을 맞춘다.
+            block_start_row = row - ((row - 14) % row_step) if row >= 14 else row
+            slot_row = block_start_row
+            result_row = block_start_row + (row_step - 1)
+            if remote_block_start_row is not None and slot_row >= remote_block_start_row:
+                slot_row = None
+            if slot_row is None:
+                # Remote 구역(Standby/On-Off)로 판정되는 블록은 X 마킹/비활성 처리 제외
+                is_remote_block = True
+            else:
+                is_remote_block = False
+            # Remote On/Off / Stand By Block 구역은 X 마킹에서 제외
+            func_key_found = None
+            if not is_remote_block:
+                for col_idx in range(7, 13):  # G~L
+                    v = ws.cell(row=row, column=col_idx).value
+                    if not v:
+                        continue
+                    t_raw = str(v).upper().replace(" ", "")
+                    if ("REMOTE" in t_raw and ("ON" in t_raw or "OFF" in t_raw)) or (
+                        "STAND" in t_raw and "BY" in t_raw
+                    ):
+                        is_remote_block = True
+                        break
+
+                    tk = _norm_text(v)
+                    func_key_found = _resolve_rule_func_key_for_cell(tk, rule_applicable)
+                    if func_key_found:
+                        break
+
+                if (not is_remote_block) and func_key_found:
+                    for cond_key, cond_col in cond_cols_map.items():
+                        applicable = rule_applicable.get(func_key_found, {}).get(cond_key, True)
+                        if not applicable:
+                            # "X" 텍스트는 제거하고(값 비움) 회색 비활성 스타일만 남긴다.
+                            # 슬롯 행(slot_row) + 결과 행(result_row)까지 같이 비활성 처리
+                            _set_value_safely(slot_row, cond_col, "")
+                            _apply_disabled_style(slot_row, cond_col)
+                            _set_value_safely(result_row, cond_col, "")
+                            _apply_disabled_style(result_row, cond_col)
         # 진행 상황 표시 (20행 단위)
         if (row - 14) % 21 == 0:
             print(f"[진행] 행 {row} 처리 중...")
@@ -658,7 +1281,13 @@ def process_excel(excel_path, db_records, log_func, options=None):
             if any("MBRF2080CTP" in s.upper() for s in m_values):
                 log_func(f"[디버그] 행{row}에서 MBRF2080CTP 발견했으나 DB 매칭 실패!!", color="yellow")
             
-            unmatched.append((src_name, row, current_m_str))
+            # Function(실제 룰 키) + M~R에 Ref 로케이션이 있을 때만 신규 후보에 포함
+            if (
+                func_key_for_count
+                and _mr_row_has_schematic_ref(m_values)
+                and not _is_mr_part_sheet_header_row(m_values, current_m_str)
+            ):
+                unmatched.append((src_name, row, current_m_str))
 
     result_path = None
     if dry_run:
@@ -675,7 +1304,7 @@ def process_excel(excel_path, db_records, log_func, options=None):
         wb.save(result_path)
         wb.close()
         log_func(f"[저장] Result\\{result_name}")
-
+    
     unmatched_count = len(unmatched)
     log_func(f"\n완료: 총 {checked}개 확인, {matched}개 일치, {unmatched_count}개 미일치")
     if callable(progress_cb):
@@ -728,12 +1357,18 @@ class ModernRoundedButton(tk.Canvas):
         self.text_val = text
         self.text_color = text_color
         self.icon = icon
+        self.attention_ring = False
 
         self.bind("<Configure>", self._on_resize)
         self.bind("<Button-1>", self._on_click)
         self.bind("<ButtonRelease-1>", self._on_release)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+
+    def set_attention_ring(self, on: bool):
+        self.attention_ring = bool(on)
+        base = self.bg_color if self.state == "normal" else BORDER
+        self._draw(base)
 
     def _on_resize(self, event):
         self._draw(self.bg_color if self.state == "normal" else BORDER)
@@ -742,7 +1377,12 @@ class ModernRoundedButton(tk.Canvas):
         self.delete("all")
         w, h = self.winfo_width(), self.winfo_height()
         if w < 10 or h < 10: return
-        create_rounded_rect(self, 1, 1, w-1, h-1, self.radius, fill=color, outline="")
+        if self.attention_ring:
+            create_rounded_rect(
+                self, 1, 1, w - 1, h - 1, self.radius, fill=color, outline=WARN, width=3,
+            )
+        else:
+            create_rounded_rect(self, 1, 1, w - 1, h - 1, self.radius, fill=color, outline="")
         
         display_text = f"{self.icon}   {self.text_val}" if self.icon else self.text_val
         self.text_id = self.create_text(w/2, h/2, text=display_text, fill=self.text_color if self.state == "normal" else TEXT_SEC, font=("Segoe UI", 11, "bold"), justify="center")
@@ -758,8 +1398,14 @@ class ModernRoundedButton(tk.Canvas):
             self.command()
 
     def configure(self, **kwargs):
+        redraw = False
+        if "attention_ring" in kwargs:
+            self.attention_ring = bool(kwargs.pop("attention_ring"))
+            redraw = True
         if "state" in kwargs:
-            self.state = kwargs["state"]
+            self.state = kwargs.pop("state")
+            redraw = True
+        if redraw:
             self._draw(self.bg_color if self.state == "normal" else BORDER)
 
 class DbCard(tk.Frame):
@@ -794,7 +1440,7 @@ class DbCard(tk.Frame):
         self.lbl_status.configure(text="✅ 로드 완료", fg=PRIMARY)
         self.lbl_desc.configure(text=f"총 {total}건이 로드되었습니다.", fg=TEXT_SEC)
         self.lbl_breakdown.configure(text=f"부품별: {br}", fg=TEXT_PRI)
-
+        
     def set_error(self, err):
         self.lbl_status.configure(text="❌ 로드 실패", fg=ERROR_COL)
         self.lbl_desc.configure(text=str(err), fg=ERROR_COL)
@@ -1060,8 +1706,15 @@ class App(tk.Tk):
         self.excel_path = None
         self.last_unmatched = []
         self.batch_paths = []
+        self.pl_vendor_confirmed = False
+        self._vendor_pulse_job = None
+        # Part List: 같은 실행 중 동일 파일 조합 재파싱 방지(결과 동일, 속도만 개선)
+        # key = (abs_path, size, mtime) 튜플들의 튜플
+        self._pl_mem_cache = {}
+        self._pl_last_sig = None
 
         self._build_ui()
+        self._sync_vendor_button_state()
         self._setup_dnd()
         self._bind_shortcuts()
         self._process_log_queue()
@@ -1148,22 +1801,26 @@ class App(tk.Tk):
             font=("Segoe UI", 9), anchor="w", justify="left", wraplength=480
         )
         self.lbl_pl_status.pack(side="left", fill="x", expand=True)
-        self.btn_pl_reload = tk.Button(
-            pl_row, text="PL 재로드", command=self._reload_part_list,
-            relief=tk.FLAT, bg=BG_MAIN, fg=PRIMARY, font=("Segoe UI", 9), cursor="hand2", padx=4, bd=0
-        )
-        self.btn_pl_reload.pack(side="right")
-        self.btn_vendor = tk.Button(
-            pl_row, text="벤더 선택", command=self._open_vendor_selector,
-            relief=tk.FLAT, bg=BG_MAIN, fg=PRIMARY, font=("Segoe UI", 9), cursor="hand2", padx=4, bd=0
-        )
-        self.btn_vendor.pack(side="right", padx=(0, 6))
+        self.pb_pl = ttk.Progressbar(pl_row, orient="horizontal", mode="determinate", length=120, maximum=100)
+        self.pb_pl.pack(side="right", padx=(4, 4))
         self.lbl_pl_percent = tk.Label(
             pl_row, text="0%", bg=BG_MAIN, fg=TEXT_SEC, font=("Segoe UI", 9, "bold"), width=5, anchor="e"
         )
         self.lbl_pl_percent.pack(side="right", padx=(6, 4))
-        self.pb_pl = ttk.Progressbar(pl_row, orient="horizontal", mode="determinate", length=120, maximum=100)
-        self.pb_pl.pack(side="right", padx=(4, 4))
+        pl_vendor_row = tk.Frame(db_container, bg=BG_MAIN)
+        pl_vendor_row.pack(fill="x", pady=(10, 0))
+        self.btn_vendor = ModernRoundedButton(
+            pl_vendor_row,
+            "벤더 선택 — 로케이션별 1·2·3차 (Part List 파싱 후 필수)",
+            self._open_vendor_selector,
+            height=48,
+            radius=10,
+            bg_color=PRIMARY,
+            hover_color=PRIMARY_HOV,
+            text_color="#ffffff",
+            icon="▶",
+        )
+        self.btn_vendor.pack(fill="x")
         upload_wrap = tk.Frame(left_panel, bg=BG_MAIN)
         upload_wrap.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
         upload_wrap.grid_columnconfigure(0, weight=1)
@@ -1418,10 +2075,13 @@ class App(tk.Tk):
         fname = os.path.basename(path)
         self.upload_zone.set_selected(fname)
         self.form_locations = self._extract_form_locations(path)
+        if self.pl_lookup:
+            self.pl_vendor_confirmed = False
         if add_recent:
             self.app_config = add_recent_file(self.app_config, path)
             self._refresh_recent_combo()
         self._log(f"[안내] 엑셀 파일 선택 완료: {fname} (로케이션 {len(self.form_locations)}개 탐지)", "green")
+        self._sync_vendor_button_state()
 
     def _extract_form_locations(self, path):
         out = set()
@@ -1453,6 +2113,19 @@ class App(tk.Tk):
             return
         self._set_part_list_files(paths)
 
+    def _pl_signature(self, paths):
+        sig = []
+        for p in paths or []:
+            try:
+                ap = os.path.abspath(os.path.normpath(p))
+                st = os.stat(ap)
+                sig.append((ap, int(st.st_size), int(st.st_mtime)))
+            except Exception:
+                ap = os.path.abspath(os.path.normpath(p))
+                sig.append((ap, 0, 0))
+        sig.sort(key=lambda t: t[0].lower())
+        return tuple(sig)
+
     def _set_part_list_files(self, paths):
         cleaned = []
         for p in paths:
@@ -1461,7 +2134,39 @@ class App(tk.Tk):
         if not cleaned:
             messagebox.showwarning("안내", "유효한 Part List 엑셀 파일(.xlsx/.xlsm)을 찾지 못했습니다.")
             return
+        self.pl_vendor_confirmed = False
+        # 동일 파일 조합이면, 이미 로드된 결과/캐시를 재사용 (결과 동일)
+        sig = self._pl_signature(cleaned)
+        if (
+            sig
+            and sig == getattr(self, "_pl_last_sig", None)
+            and self.pl_lookup
+            and not self.pl_loading
+        ):
+            self._log("[PL] 동일 Part List 조합 — 재파싱 생략", "green")
+            self._sync_vendor_button_state()
+            return
+        if sig and sig in self._pl_mem_cache and not self.pl_loading:
+            cached = self._pl_mem_cache[sig]
+            self.pl_lookup = cached.get("pl_lookup") or {}
+            self.pl_vendor_rank_by_loc = cached.get("pl_vendor_rank_by_loc") or {}
+            self.pl_paths = list(cleaned)
+            self._pl_last_sig = sig
+            nloc = len(self.pl_lookup)
+            nent = sum(len(v) for v in self.pl_lookup.values())
+            label = os.path.basename(cleaned[0]) if len(cleaned) == 1 else f"{len(cleaned)}개 파일"
+            self.pl_upload_zone.set_selected(label)
+            self.lbl_pl_status.configure(
+                text=f"Part List: 로드 완료(캐시) - 로케이션 {nloc}개 / 후보 {nent}건",
+                fg=PRIMARY,
+            )
+            self._set_pl_progress(100)
+            self._log("[PL] 메모리 캐시 사용 — 즉시 로드", "green")
+            self._sync_vendor_button_state()
+            return
+
         self.pl_paths = cleaned
+        self._pl_last_sig = sig
         label = os.path.basename(cleaned[0]) if len(cleaned) == 1 else f"{len(cleaned)}개 파일"
         self.pl_upload_zone.set_loading(label, 0)
         self._log(f"[PL] 선택 파일 {len(self.pl_paths)}개 지정", "green")
@@ -1508,7 +2213,16 @@ class App(tk.Tk):
         lb.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
         sb.pack(side="right", fill="y", pady=8, padx=(0, 8))
 
-        all_keys = sorted([k for k in self.pl_lookup.keys() if k in self.form_locations])
+        def _loc_sort_key(k):
+            # 후보 1개(1차 고정)는 사용자 선택이 필요 없으므로 목록 맨 아래로 둔다.
+            cands = self.pl_lookup.get(k, [])
+            fixed_single = len(cands) <= 1
+            return (1 if fixed_single else 0, k)
+
+        all_keys = sorted(
+            [k for k in self.pl_lookup.keys() if k in self.form_locations],
+            key=_loc_sort_key,
+        )
         filtered_keys = list(all_keys)
         idx_to_key = {}
 
@@ -1557,9 +2271,15 @@ class App(tk.Tk):
             ctrl, text="초기화", relief=tk.FLAT, bg=PRIMARY_SOFT, fg=PRIMARY, padx=10,
             command=lambda: _set_auto_for_current()
         ).pack(side="right")
+
+        def _confirm_vendor_and_close():
+            self.pl_vendor_confirmed = True
+            win.destroy()
+            self._sync_vendor_button_state()
+
         tk.Button(
             ctrl, text="완료", relief=tk.FLAT, bg=PRIMARY, fg="#ffffff", padx=12,
-            command=win.destroy
+            command=_confirm_vendor_and_close,
         ).pack(side="right", padx=(0, 8))
         tk.Button(
             ctrl, text="이전으로(Ctrl+Z)", relief=tk.FLAT, bg=BG_CARD, fg=PRIMARY, padx=8,
@@ -1572,7 +2292,7 @@ class App(tk.Tk):
             for i, k in enumerate(filtered_keys):
                 cands = self.pl_lookup.get(k, [])
                 if len(cands) == 1:
-                    rank_txt = "1차"
+                    rank_txt = "1차(고정)"
                 else:
                     rank = self.pl_vendor_rank_by_loc.get(k, 0)
                     rank_txt = "자동" if rank <= 0 else f"{rank}차"
@@ -1585,7 +2305,7 @@ class App(tk.Tk):
                     continue
                 cands = self.pl_lookup.get(k, [])
                 if len(cands) == 1:
-                    rank_txt = "1차"
+                    rank_txt = "1차(고정)"
                 else:
                     rank = self.pl_vendor_rank_by_loc.get(k, 0)
                     rank_txt = "자동" if rank <= 0 else f"{rank}차"
@@ -1626,8 +2346,12 @@ class App(tk.Tk):
         def _render_candidates(k):
             current_key["value"] = k
             cands = self.pl_lookup.get(k, [])
-            rank = 1 if len(cands) == 1 else self.pl_vendor_rank_by_loc.get(k, 0)
-            chosen_rank = f"{rank}차" if rank > 0 else "자동"
+            if len(cands) == 1:
+                rank = 1
+                chosen_rank = "1차(고정)"
+            else:
+                rank = self.pl_vendor_rank_by_loc.get(k, 0)
+                chosen_rank = f"{rank}차" if rank > 0 else "자동"
             info_head.configure(text=f"[{k}] 현재 선택: {chosen_rank}")
             for w in cand_inner.winfo_children():
                 w.destroy()
@@ -1794,13 +2518,16 @@ class App(tk.Tk):
             self.after(0, lambda: self.lbl_pl_status.configure(
                 text="Part List: part_list_loader 없음", fg=TEXT_SEC))
             self.after(0, lambda: self._set_pl_progress(0))
+            self.after(0, self._sync_vendor_button_state)
             return
         if not self.pl_paths:
             self.pl_lookup = {}
+            self.pl_vendor_confirmed = False
             self.pl_loading = False
             self.after(0, lambda: self.lbl_pl_status.configure(
                 text="Part List: 업로드된 파일 없음", fg=TEXT_SEC))
             self.after(0, lambda: self._set_pl_progress(0))
+            self.after(0, self._sync_vendor_button_state)
             return
         try:
             def _pl_prog(done, total, _name):
@@ -1811,6 +2538,14 @@ class App(tk.Tk):
             self.pl_vendor_rank_by_loc = {
                 k: v for k, v in self.pl_vendor_rank_by_loc.items() if k in self.pl_lookup
             }
+            # 메모리 캐시 저장(동일 파일 조합이면 다음부터 즉시)
+            sig = self._pl_signature(self.pl_paths)
+            if sig:
+                self._pl_mem_cache[sig] = {
+                    "pl_lookup": self.pl_lookup,
+                    "pl_vendor_rank_by_loc": dict(self.pl_vendor_rank_by_loc),
+                }
+                self._pl_last_sig = sig
             nloc = len(self.pl_lookup)
             nent = sum(len(v) for v in self.pl_lookup.values())
             self.after(0, lambda: self.lbl_pl_status.configure(
@@ -1821,6 +2556,7 @@ class App(tk.Tk):
             self.after(0, lambda l=done_label: self.pl_upload_zone.set_selected(l))
         except Exception as e:
             self.pl_lookup = {}
+            self.pl_vendor_confirmed = False
             self.after(0, lambda: self.lbl_pl_status.configure(
                 text=f"Part List: 오류 — {e}", fg=ERROR_COL))
             self._log(f"[PL] 로드 실패: {e}", "red")
@@ -1830,17 +2566,69 @@ class App(tk.Tk):
                 self.after(0, lambda l=err_label: self.pl_upload_zone.set_loading(l, 0))
         finally:
             self.pl_loading = False
+            self.after(0, self._sync_vendor_button_state)
 
-    def _reload_part_list(self):
-        if not self.pl_paths:
-            messagebox.showinfo("안내", "먼저 오른쪽 박스에서 Part List 파일을 업로드하세요.")
-            self.lbl_pl_status.configure(text="Part List: 업로드된 파일 없음", fg=TEXT_SEC)
-            self._set_pl_progress(0)
+    def _stop_vendor_pulse(self):
+        if getattr(self, "_vendor_pulse_job", None):
+            try:
+                self.after_cancel(self._vendor_pulse_job)
+            except Exception:
+                pass
+            self._vendor_pulse_job = None
+        if hasattr(self, "btn_vendor"):
+            self.btn_vendor.set_attention_ring(False)
+
+    def _vendor_pulse_tick(self):
+        if (
+            self.pl_vendor_confirmed
+            or not self.var_pl_lookup.get()
+            or not self.pl_lookup
+            or self.pl_loading
+        ):
+            self._stop_vendor_pulse()
             return
-        self.pl_loading = True
-        self._set_pl_progress(0)
-        self.lbl_pl_status.configure(text="Part List: 파일 업로드 중... 0%", fg=TEXT_SEC)
-        threading.Thread(target=self._load_part_list_worker, daemon=True).start()
+        lit = not getattr(self, "_vendor_pulse_lit", False)
+        self._vendor_pulse_lit = lit
+        self.btn_vendor.set_attention_ring(lit)
+        self._vendor_pulse_job = self.after(700, self._vendor_pulse_tick)
+
+    def _start_vendor_pulse(self):
+        if (
+            self.pl_vendor_confirmed
+            or not self.var_pl_lookup.get()
+            or not self.pl_lookup
+            or self.pl_loading
+        ):
+            return
+        self._stop_vendor_pulse()
+        self._vendor_pulse_lit = False
+        self._vendor_pulse_tick()
+
+    def _reset_vendor_button_to_pending(self):
+        self.btn_vendor.bg_color = PRIMARY
+        self.btn_vendor.hover_color = PRIMARY_HOV
+        self.btn_vendor.text_color = "#ffffff"
+        self.btn_vendor.icon = "▶"
+        self.btn_vendor.text_val = "벤더 선택 — 로케이션별 1·2·3차 (Part List 파싱 후 필수)"
+        self.btn_vendor.set_attention_ring(False)
+
+    def _apply_vendor_button_done_style(self):
+        self.btn_vendor.bg_color = SUCCESS
+        self.btn_vendor.hover_color = "#047857"
+        self.btn_vendor.text_color = "#ffffff"
+        self.btn_vendor.icon = "✓"
+        self.btn_vendor.text_val = "벤더 선택 완료 (다시 클릭해 수정 가능)"
+        self.btn_vendor.set_attention_ring(False)
+
+    def _sync_vendor_button_state(self):
+        self._stop_vendor_pulse()
+        if not hasattr(self, "btn_vendor"):
+            return
+        if self.pl_vendor_confirmed and self.pl_lookup and self.var_pl_lookup.get():
+            self._apply_vendor_button_done_style()
+        else:
+            self._reset_vendor_button_to_pending()
+            self._start_vendor_pulse()
 
     def _show_add_part_dialog(self):
         if not os.path.exists(DB_FILE):
@@ -1872,6 +2660,19 @@ class App(tk.Tk):
             return
         if self.var_pl_lookup.get() and self.pl_loading:
             messagebox.showinfo("안내", "Part List를 읽는 중입니다. 상태가 '로케이션 ...'으로 바뀐 뒤 다시 실행해주세요.")
+            return
+        if (
+            self.var_pl_lookup.get()
+            and self.pl_paths
+            and self.pl_lookup
+            and not self.pl_loading
+            and self.form_locations
+            and not self.pl_vendor_confirmed
+        ):
+            messagebox.showwarning(
+                "벤더 선택 필요",
+                "Part List를 반영하려면 파란색 '벤더 선택' 버튼을 눌러 창을 연 뒤 내용을 확인하고 [완료]를 눌러 주세요.",
+            )
             return
 
         files = list(self.batch_paths) if self.batch_paths else [self.excel_path]
@@ -1926,17 +2727,19 @@ class App(tk.Tk):
                         f"[안내] 일괄 처리: 미일치 {unmatched_count}건은 {n_files}개 파일을 합친 목록입니다.",
                         "yellow",
                     )
-
+                
                 def update_ui_success():
+                    grouped = self._group_unmatched_by_part(merged_unmatched)
+                    n_kinds = len(grouped)
                     self.status_bar.stop_progress(
-                        f"완료 — 파일 {n_files}개 / 확인 {total_checked} / 일치 {total_matched} / 미일치 {unmatched_count}", True
+                        f"완료 — 파일 {n_files}개 / 확인 {total_checked} / 일치 {total_matched} "
+                        f"/ 미일치 {unmatched_count}곳 · 신규 후보 {n_kinds}종",
+                        True,
                     )
                     if unmatched_count > 0:
                         self.btn_unmatched.configure(state="normal")
-                        if messagebox.askyesno(
-                            "신규 부품 확인",
-                            f"DB 미일치 항목이 {unmatched_count}건 있습니다.\n신규 부품 등록 창을 여시겠습니까?"
-                        ):
+                        prompt = self._format_new_parts_prompt(grouped, max_locs_per_part=12)
+                        if messagebox.askyesno("신규 부품 확인", prompt):
                             self._show_add_part_dialog()
                     else:
                         self.btn_unmatched.configure(state="disabled")
@@ -1961,13 +2764,79 @@ class App(tk.Tk):
         else:
             messagebox.showinfo("안내", "아직 Result 폴더가 없습니다.")
 
+    def _group_unmatched_by_part(self, items):
+        """
+        last_unmatched = process_excel의 unmatched 목록(항목별: (fn, row, pn) 또는 (row, pn))
+        을 '실제 부품·스펙' 기준으로 묶는다 (같은 부품이 여러 로케이션/행이면 1건).
+        """
+        groups = {}  # gkey -> {"display": str, "locs": set()}
+        for it in items or []:
+            if len(it) == 3:
+                _, _, pn = it
+                pn_str = str(pn).strip() if pn is not None else ""
+                if not pn_str:
+                    continue
+            else:
+                _, pn = it
+                pn_str = str(pn).strip() if pn is not None else ""
+                if not pn_str:
+                    continue
+
+            loc = _extract_location_label_from_unmatched(pn_str)
+            if not loc:
+                continue
+
+            gkey, disp = _unmatched_group_key_and_display(pn_str)
+            if not gkey:
+                continue
+            if gkey not in groups:
+                groups[gkey] = {"display": disp or pn_str, "locs": set()}
+            groups[gkey]["locs"].add(loc)
+            if disp and len(disp) > len(groups[gkey].get("display") or ""):
+                groups[gkey]["display"] = disp
+
+        grouped = []
+        for g in groups.values():
+            locs_sorted = sorted(g["locs"], key=lambda s: (_norm_text(s), s))
+            grouped.append((g["display"], locs_sorted))
+        grouped.sort(key=lambda x: x[0])
+        return grouped
+
+    def _format_new_parts_prompt(self, grouped, max_locs_per_part=8):
+        """
+        grouped: [(pn, [locs...]), ...]
+        """
+        if not grouped:
+            return "DB 미일치 항목이 있습니다.\n신규 부품 등록 창을 여시겠습니까?"
+
+        total_spots = sum(len(locs) for _, locs in grouped)
+        lines = []
+        for pn, locs in grouped:
+            if len(locs) <= max_locs_per_part:
+                loc_txt = ", ".join(locs)
+            else:
+                loc_txt = ", ".join(locs[:max_locs_per_part]) + f" 외 {len(locs) - max_locs_per_part}개"
+            lines.append(f"• {pn}\n  └ 로케이션: {loc_txt}")
+
+        return (
+            f"DB 미일치 신규 후보 부품 {len(grouped)}종 (총 {total_spots}개 로케이션).\n\n"
+            + "\n".join(lines)
+            + "\n\n신규 부품 등록 창을 여시겠습니까?"
+        )
+
     def _show_unmatched(self):
         if not self.last_unmatched: return
         win = tk.Toplevel(self)
         win.title("미일치 항목")
         win.geometry("640x480")
         win.configure(bg=BG_MAIN)
-        tk.Label(win, text=f"⚠ 미일치 항목 ({len(self.last_unmatched)}개)", bg=BG_MAIN, fg=WARN, font=("Segoe UI", 13, "bold")).pack(pady=16, padx=16, anchor="w")
+        tk.Label(
+            win,
+            text=f"⚠ 미일치 항목 ({len(self.last_unmatched)}개)",
+            bg=BG_MAIN,
+            fg=WARN,
+            font=("Segoe UI", 13, "bold"),
+        ).pack(pady=16, padx=16, anchor="w")
         tb = scrolledtext.ScrolledText(win, bg=BG_CARD, fg=TEXT_PRI, font=("Consolas", 10), relief="flat")
         tb.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         for i, item in enumerate(self.last_unmatched, 1):
@@ -2005,8 +2874,14 @@ def main():
                 self.excel_path = None
                 self.last_unmatched = []
                 self.batch_paths = []
+                self.pl_vendor_confirmed = False
+                self._vendor_pulse_job = None
+                # Part List: 같은 실행 중 동일 파일 조합 재파싱 방지(결과 동일, 속도만 개선)
+                self._pl_mem_cache = {}
+                self._pl_last_sig = None
 
                 App._build_ui(self)
+                App._sync_vendor_button_state(self)
                 App._bind_shortcuts(self)
                 
                 self.upload_zone.drop_target_register(DND_FILES)
@@ -2024,6 +2899,8 @@ def main():
             _log = App._log
             _run = App._run
             _open_result_folder = App._open_result_folder
+            _group_unmatched_by_part = App._group_unmatched_by_part
+            _format_new_parts_prompt = App._format_new_parts_prompt
             _show_unmatched = App._show_unmatched
             _show_add_part_dialog = App._show_add_part_dialog
             _reload_db_after_add = App._reload_db_after_add
@@ -2043,12 +2920,18 @@ def main():
             _on_drop_main = App._on_drop_main
             _on_drop_pl = App._on_drop_pl
             _select_part_list_files = App._select_part_list_files
+            _pl_signature = App._pl_signature
             _set_part_list_files = App._set_part_list_files
             _open_vendor_selector = App._open_vendor_selector
             _set_pl_progress = App._set_pl_progress
             _set_run_progress = App._set_run_progress
             _load_part_list_worker = App._load_part_list_worker
-            _reload_part_list = App._reload_part_list
+            _sync_vendor_button_state = App._sync_vendor_button_state
+            _stop_vendor_pulse = App._stop_vendor_pulse
+            _vendor_pulse_tick = App._vendor_pulse_tick
+            _start_vendor_pulse = App._start_vendor_pulse
+            _reset_vendor_button_to_pending = App._reset_vendor_button_to_pending
+            _apply_vendor_button_done_style = App._apply_vendor_button_done_style
 
         app = AppDnD()
     except ImportError:
